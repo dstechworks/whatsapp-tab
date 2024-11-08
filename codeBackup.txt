@@ -1,0 +1,469 @@
+const XLSX = require('xlsx');
+const { Pool } = require('pg');
+const path = require('path');
+const fs = require('fs');
+require('dotenv').config();
+
+// Twilio Intialize
+const accountSid = process.env.ACCOUNT_SID;
+const authToken = process.env.AUTH_TOKEN;
+const client = require('twilio')(accountSid, authToken);
+const logger = require('./logger');
+
+const pool = new Pool({
+    user: "postgres",
+    host: 'db.mgampbhmlnalxohuobpr.supabase.co',
+    database: "postgres",
+    password: 'gplVhDuxLDMeBKxs',
+    port: 5432,
+});
+
+
+async function sendMessage() {
+    // Get Excel
+    const baseDataPath = path.join(__dirname, 'baseData.xlsx');
+    const baseDataExcel = XLSX.readFile(baseDataPath)
+    const basedataSheetName = baseDataExcel.SheetNames[1]
+    const baseDataSheet = XLSX.utils.sheet_to_json(baseDataExcel.Sheets[basedataSheetName])
+    // const response = await pool.query(`select * from tab_device_records where device_id != 'null'`);
+    const response = await pool.query(`select * from tab_device_records where branch is not null and branch != 'null' and deploy = 'Yes'`);
+
+    let tabTableData = response.rows;
+
+    function findDevices(args) {
+        let dataArr = [];
+        tabTableData.forEach(x => {
+            let filterData = baseDataSheet.find(y => y['Device ID'] == x['device_id']);
+            if (filterData) {
+                x['dhanush_id'] = nameHelper(filterData['Dhanush Id']);
+                x['store_name'] = nameHelper(filterData['Store Name']);
+                x['branch'] = nameHelper(filterData['Branch']);
+                x['tl_name'] = nameHelper(filterData['TL Name']);
+                x['tl_number'] = numberHelper(filterData['TL Mobile No']);
+                x['ae_name'] = nameHelper(filterData['AE Name']);
+                x['ae_number'] = numberHelper(filterData['AE Mobile No']);
+                x['am_name'] = nameHelper(filterData['AM Name']);
+                x['am_number'] = numberHelper(filterData['AM Mobile No']);
+                x['assistant_name'] = nameHelper(filterData['Assistant Name']);
+                x['assistant_number'] = numberHelper(filterData['Assistant Mobile No']);
+            }
+            if (filterData && (args === "getMatchedDevices")) {
+                dataArr.push(x);
+            } else if (!filterData && (args === "getNotMatchedDevices")) {
+                dataArr.push(x);
+            }
+        })
+        return dataArr;
+    }
+
+    function mergeAllData() {
+        let temp = [];
+        const currentDate = new Date(new Date().getTime() - 5 * 60 * 1000);
+        findDevices('getMatchedDevices').forEach(x => {
+            if (x?.updated_timestamp && x?.branch != null) {
+                if (new Date(x.updated_timestamp) > currentDate) {
+                    x['status'] = 'Active';
+                }
+                if (new Date(x.updated_timestamp) < currentDate) {
+                    x['status'] = 'InActive';
+                }
+            }
+            temp.push(x)
+        })
+        return temp;
+    }
+
+    function getDevicesByStatus(args) {
+        let temp = []
+        mergeAllData().forEach(x => {
+            if (x['status'] == args) {
+                temp.push(x);
+            } else if (x['status'] == args) {
+                temp.push(x);
+            }
+        })
+        return temp
+    }
+
+    function delay(milliseconds) {
+        return new Promise(resolve => {
+            setTimeout(resolve, milliseconds);
+        });
+    }
+
+    function getAllBranch() {
+        let temp = {}
+        baseDataSheet.forEach(x => {
+            temp[x['Branch']] = {}
+        })
+        return temp
+    }
+
+    function numberHelper(x) {
+        if (x && x?.toString()?.replace(/[.\s]/g, '')?.substring(0, 10)?.length == 10) {
+            return x?.toString()?.replace(/[.\s]/g, '')?.substring(0, 10);
+        } else {
+            return undefined;
+        }
+    }
+
+    function nameHelper(x) {
+        if (x && x?.toString()?.toUpperCase()?.length > 0) {
+            return x?.toString().trim()?.toUpperCase();
+        } else {
+            return undefined;
+        }
+    }
+
+    function conditionChecker(x) {
+        if (nameHelper(x['am_name']) && numberHelper(x['am_number']) && nameHelper(x['assistant_name']) && numberHelper(x['assistant_number'])) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    // console.log("\n");
+    // console.table({
+    //     "Total Number of Devices found in Base Sheet ": baseDataSheet.length,
+    //     "Total Number of Devices found in Supabase table ": tabTableData?.length,
+    //     "Data Not Matched with Base sheet ": findDevices('getNotMatchedDevices').length,
+    //     "Data Matched with Base sheet ": findDevices('getMatchedDevices').length,
+    //     "Active Devices ": getDevicesByStatus('Active').length,
+    //     "IActive Devices ": getDevicesByStatus('InActive').length
+    // })
+    // console.log("\n");
+
+    let tabTotalCount = 0;
+    let AEDevice = {}
+    let TLDevice = [];
+    let NationalPOCNum = {
+        "Hitesh": "8700685675",
+        "Dhruv": "8826909378",
+        "Sumit": "8920131195",
+        "Pratek": "9818429501",
+        "Chirag": "9818875211",
+        "Anirban Sen": "9831055203",
+        "Nitsh Chabbra": "9712933048",
+        "Nalin Kaushik": "9831055468",
+        "Gaurav Pundlik": "9831149422",
+        "Karan Sehgal": "9953006252",
+        "Rishab Agarwal": "9734469759",
+        "unknown": "9903955267"
+    }
+    let DistrictPOCNum = {
+        "N": {
+            "Neeraj Malhotra": "9910036710",
+            "Malika Arjun Kalika": "8123919411",
+            "Sumit Bothra": "9831077603"
+        },
+        "S": {
+            "Mr Sudalai Muthu": "9949496708",
+            "Vikas": "7483579458",
+            "Baker Fen John": "9994810050",
+            "Vikram Khosla": "9831055167"
+        },
+        "E": {
+            "Satyendra Singh": "9915440705",
+            "Jupiter Guha": "9163323485",
+            "Chanchal Mukherjee": "9831873270",
+            "Nikhil Kapoor": "9121017082",
+            "Vishnu": "9790999093"
+        },
+        "W": {
+            "Pankaj Swahney": "8527535300",
+            "Chanchal Mukherjee": "9831873270",
+            "Vinit Agarwal": "7087685878",
+            "Mudit Bagla": "9831055257"
+        }
+    }
+    let zone = {
+        "N": {
+            active: 0,
+            inactive: 0
+        },
+        "S": {
+            active: 0,
+            inactive: 0
+        },
+        "E": {
+            active: 0,
+            inactive: 0
+        },
+        "W": {
+            active: 0,
+            inactive: 0
+        }
+    }
+    let totalDevices = 0;
+    let allBranches = getAllBranch()
+
+    mergeAllData().forEach(x => {
+        // console.log(x);
+        if (x.status == 'Active') {
+            totalDevices++;
+            allBranches[x['branch']].active = 0
+            allBranches[x['branch']].inactive = 0
+            allBranches[x['branch']].total = 0
+
+            if (conditionChecker(x)) {
+                AEDevice[x['am_name']] = []
+                AEDevice[x['am_name']]['Total Count'] = 0
+                AEDevice[x['am_name']]['Active Count'] = 0
+                AEDevice[x['am_name']]['InActive Count'] = 0
+
+                AEDevice[x['am_name']]['AM Name'] = nameHelper(x['am_name'])
+                AEDevice[x['am_name']]['AM Mobile No'] = numberHelper(x['am_number'])
+                AEDevice[x['am_name']]['Assistant Name'] = nameHelper(x['assistant_name'])
+                AEDevice[x['am_name']]['Assistant Mobile No'] = numberHelper(x['assistant_number'])
+
+                AEDevice[x['Total Devices']] = []
+            }
+        }
+
+        if (x.status == 'InActive') {
+            TLDevice.push({
+                'Dhanush Id': x['dhanush_id'],
+                'Device ID': x['device_id'],
+                'Store Name': nameHelper(x['store_name']),
+                'Store Number': numberHelper(x['so_contact']),
+                'Branch': x['branch'],
+                'TL Name': nameHelper(x['tl_name']),
+                'TL Mobile No': numberHelper(x['tl_number']),
+                'AE Name': nameHelper(x['ae_name']),
+                'AE Mobile No': numberHelper(x['ae_number']),
+            })
+        }
+    })
+
+
+    mergeAllData().forEach(x => {
+        if (AEDevice[x['am_name']] && x['branch'] && conditionChecker(x)) {
+            allBranches[x['branch']].total++
+            AEDevice[x['am_name']]['Total Count']++
+            if (x.status == 'Active') {
+                allBranches[x['branch']].active++
+                AEDevice[x['am_name']]['Active Count']++
+            }
+            if (x.status == 'InActive') {
+                allBranches[x['branch']].inactive++
+                AEDevice[x['am_name']]['InActive Count']++
+            }
+        }
+    })
+
+    for (const property in allBranches) {
+        if (allBranches[property].active != undefined || allBranches[property].inactive != undefined) {
+            zone[property.substring(0, 1)].active += parseInt(allBranches[property].active)
+            zone[property.substring(0, 1)].inactive += parseInt(allBranches[property].inactive)
+        }
+    }
+
+
+    // console.log(totalDevices);
+    // console.log(AEDevice);
+    // console.log(allBranches);
+    // console.log(zone);
+
+
+
+
+
+    /////////------------------------------- Send National Message ----------------------------/////////
+    let messageBodyNP = `NATIONAL TABLET STATUS\nWest : ${zone.W.active} (Active) / ${zone.W.inactive} (Inactive)\nNorth : ${zone.N.active} (Active) / ${zone.N.inactive} (Inactive)\nEast : ${zone.E.active} (Active) / ${zone.E.inactive} (Inactive)\nSouth : ${zone.S.active} (Active) / ${zone.S.inactive} (Inactive)`;
+    console.log(messageBodyNP, "\n");
+
+    await delay(7000);
+
+    for (let key in NationalPOCNum) {
+        // console.log(`National POC Name : ${key} , Mobile : ${NationalPOCNum[key]}\n`);
+
+        await client.messages
+            .create({
+                body: messageBodyNP,
+                from: 'whatsapp:+13477089308',
+                to: `whatsapp:+91${NationalPOCNum[key]}`
+            })
+            .then((message) => {
+                console.log(`${key} ---> ${message.sid}`);
+            });
+
+        // await delay(700);
+    }
+
+
+
+
+    console.log("\n");
+    console.log('*************************** National Messages Done ************************', "\n");
+    await delay(500);
+
+
+
+
+
+    ////////-------------------------------- Send District Message ----------------------------/////////
+    // console.log(allBranches);
+    let districtCount = 0;
+    for (let key in allBranches) {
+        if (allBranches[key]['active']) {
+            allBranches[key]["District POC Numbers"] = DistrictPOCNum[`${key[0]}`]
+            // console.log(allBranches[key]["District POC Numbers"]);
+            for (let pocNum in allBranches[key]["District POC Numbers"]) {
+                districtCount++;
+                let messageBodyDP = `TABLET STATUS\nBranch Name: ${key}\nTotal Devices: ${allBranches[key]['total']}\nActive Devices: ${allBranches[key]['active']}\nInactive Devices: ${allBranches[key]['inactive']}`;
+                // console.log(`Branch : ${key} , District POC Name : ${pocNum} , Mobile : ${allBranches[key]["District POC Numbers"][pocNum]}\n`);
+                // console.log(messageBodyDP, "\n");
+
+                await client.messages
+                    .create({
+                        body: messageBodyDP,
+                        from: 'whatsapp:+13477089308',
+                        to: `whatsapp:+91${allBranches[key]["District POC Numbers"][pocNum]}`
+                    })
+                    .then(message => console.log("District ---", districtCount, message.sid, "\n"));
+
+                // if (districtCount > 10) {
+                //     await client.messages
+                //         .create({
+                //             body: messageBodyDP,
+                //             from: 'whatsapp:+13477089308',
+                //             to: `whatsapp:+91${allBranches[key]["District POC Numbers"][pocNum]}`
+                //         })
+                //         .then(message => console.log("District ---", districtCount, message.sid, "\n"));
+                // }
+
+                // await delay(500);
+            }
+        }
+    }
+
+
+    console.log('*************************** District Messages Done ************************', "\n");
+    await delay(500);
+
+
+
+
+
+
+    ////////-------------------------------- Send AM & Assistant Message ----------------------------/////////
+    // console.log(AEDevice)
+    const AEDeviceEntries = Object.entries(AEDevice);
+
+    for (let i = 0; i < AEDeviceEntries.length; i++) {
+        const [property, data] = AEDeviceEntries[i];
+
+        if (property) {
+            // Am Logic
+            if (data['AM Name'] && data['AM Mobile No'] && data['AM Mobile No'] && data['AM Mobile No']) {
+                let messageBodyAM = `TABLET STATUS\nAE Name: ${property}\nTotal Devices: ${data['Total Count']}\nActive Devices: ${data['Active Count']}\nInactive Devices: ${data['InActive Count']}`
+                // console.log(`AM Name : ${data['AM Name']} , Mobile : ${data['AM Mobile No']} \n`);
+                // console.log(messageBodyAM, "\n");
+
+                await client.messages
+                    .create({
+                        body: messageBodyAM,
+                        from: 'whatsapp:+13477089308',
+                        to: `whatsapp:+91${data['AM Mobile No']}`
+                    })
+                    .then(message => console.log(i, "AM ---", message.sid));
+
+                ++tabTotalCount
+                // await delay(700);
+            }
+
+            // Assistant Logic
+            if (data['Assistant Name'] && data['Assistant Mobile No'] && data['Assistant Mobile No'] && data['Assistant Mobile No']) {
+                let messageBodyAssistant = `TABLET STATUS\nAE Name: ${property}\nTotal Devices: ${data['Total Count']}\nActive Devices: ${data['Active Count']}\nInactive Devices: ${data['InActive Count']}`
+                // console.log(`Assistant Name : ${data['Assistant Name']} , Mobile : ${data['Assistant Mobile No']} \n`);
+                // console.log(messageBodyAssistant, "\n");
+
+                await client.messages
+                    .create({
+                        body: messageBodyAssistant,
+                        from: 'whatsapp:+13477089308',
+                        to: `whatsapp:+91${data['Assistant Mobile No']}`
+                    })
+                    .then(message => console.log(i, "Assistant ---", message.sid, "\n"));
+
+                ++tabTotalCount
+                // await delay(700);
+            }
+        }
+    }
+
+
+
+    console.log('************************ AM & Assistant Messages Done ***********************', "\n");
+    await delay(500);
+
+
+
+
+
+    ////////-------------------------------- Send AE and TL Message ----------------------------/////////
+    // console.log(TLDevice)
+    for (let i = 0; i < TLDevice.length; i++) {
+        const x = TLDevice[i];
+
+        if (x['Store Name'] && x['Store Number'] && x['Branch'] && x['Device ID']) {
+            // Ae Logic
+            if (x['AE Name'] && x['AE Mobile No'] && x['TL Name'] && x['TL Mobile No']) {
+                let messageBodyAE = `Hi ! Tablet is not working at the following store\nStore Name: ${x['Store Name']}\nDhanush ID: ${x['Dhanush Id']}\nTL Number: ${x['TL Mobile No']}\nStore Number: ${x['Store Number']}`;
+                // console.log("\n")
+                // console.log(messageBodyAE)
+
+                await client.messages
+                    .create({
+                        contentSid: 'HX93f5e09fc4f76c0a1c6f402e17943450',
+                        from: 'whatsapp:+13477089308',
+                        contentVariables: JSON.stringify({
+                            1: x['Store Name'],
+                            2: x['Dhanush Id'] ? x['Dhanush Id'] : 'NA',
+                            3: x['TL Mobile No'],
+                            4: x['Store Number'],
+                            para: `?storename=${(x['Store Name']).toString().split(' ').join('')}&name=${(x['AE Name']).split(' ').join('')}&number=${x['AE Mobile No']}&dhanushid=NA&branch=${x['Branch']}&deviceid=${x['Device ID']}&type=tab`
+                        }),
+                        messagingServiceSid: 'MG2d825e49dc27e0eb0c5f4c5178a71c4f',
+                        to: `whatsapp:+91${x['AE Mobile No']}`
+                    })
+                    .then(message => console.log(i, "AE ---", message.sid));
+
+                ++tabTotalCount
+                // await delay(700);
+            }
+
+            // Tl Logic
+            if (x['TL Name'] && x['TL Mobile No']) {
+                let messageBodyTL = `Hi ! Tablet is not working at the following store\nStore Name: ${x['Store Name']}\nDhanush ID: ${x['Dhanush Id']}\nStore Number: ${x['Store Number']}`;
+                // console.log("\n")
+                // console.log(messageBodyTL)
+
+                await client.messages
+                    .create({
+                        contentSid: 'HXf067eb9b1edd1dff1a9c8e22a9071100',
+                        from: 'whatsapp:+13477089308',
+                        contentVariables: JSON.stringify({
+                            1: x['Store Name'],
+                            2: x['Dhanush Id'] ? x['Dhanush Id'] : 'NA',
+                            3: x['Store Number'],
+                            para: `?storename=${(x['Store Name']).toString().split(' ').join('')}&name=${(x['TL Name']).split(' ').join('')}&number=${x['TL Mobile No']}&dhanushid=NA&branch=${x['Branch']}&deviceid=${x['Device ID']}&type=tab`
+                        }),
+                        messagingServiceSid: 'MG2d825e49dc27e0eb0c5f4c5178a71c4f',
+                        to: `whatsapp:+91${x['TL Mobile No']}`
+                    })
+                    .then(message => console.log(i, "TL ---", message.sid, "\n"));
+
+                ++tabTotalCount
+                // await delay(700); 
+            }
+        }
+    }
+
+    console.log('*************************** AE and TL Messages Done ************************', "\n");
+    console.log("-------------------------- All Messages Sent Successful --------------------");
+
+}
+
+sendMessage();
